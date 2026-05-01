@@ -5,118 +5,6 @@
 <title>SuperTag Battery Monitor</title>
 </head>
 <body>
-<style>
-  .stb-root {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    padding: 16px;
-    color: #222;
-  }
-  .stb-root h1 {
-    font-size: 18px;
-    margin: 0 0 12px 0;
-    font-weight: 600;
-  }
-  .stb-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-  .stb-search {
-    flex: 1;
-    min-width: 240px;
-    padding: 8px 12px;
-    border: 1px solid #c4cdd5;
-    border-radius: 4px;
-    font-size: 14px;
-    box-sizing: border-box;
-  }
-  .stb-search:focus {
-    outline: none;
-    border-color: #2a8cd6;
-    box-shadow: 0 0 0 2px rgba(42, 140, 214, 0.2);
-  }
-  .stb-refresh {
-    padding: 8px 16px;
-    background: #2a8cd6;
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-  }
-  .stb-refresh:hover { background: #2378b8; }
-  .stb-refresh:disabled { background: #9bb8cc; cursor: not-allowed; }
-  .stb-status {
-    font-size: 13px;
-    color: #666;
-    margin-bottom: 8px;
-    min-height: 18px;
-  }
-  .stb-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-  }
-  .stb-table th,
-  .stb-table td {
-    padding: 8px 12px;
-    text-align: left;
-    border-bottom: 1px solid #e6ebef;
-  }
-  .stb-table th {
-    background: #f4f6f8;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-  }
-  .stb-table th:hover { background: #e6ebef; }
-  .stb-table th.sorted-asc::after { content: " \25B2"; font-size: 10px; }
-  .stb-table th.sorted-desc::after { content: " \25BC"; font-size: 10px; }
-  .stb-table tr:hover td { background: #f9fafb; }
-  .stb-pct {
-    font-weight: 600;
-    text-align: right;
-    width: 80px;
-  }
-  .stb-pct-bar {
-    display: inline-block;
-    width: 60px;
-    height: 8px;
-    background: #e6ebef;
-    border-radius: 4px;
-    overflow: hidden;
-    margin-right: 8px;
-    vertical-align: middle;
-  }
-  .stb-pct-bar-fill {
-    height: 100%;
-    background: #4caf50;
-    transition: width 0.2s;
-  }
-  .stb-pct-low .stb-pct-bar-fill { background: #f44336; }
-  .stb-pct-mid .stb-pct-bar-fill { background: #ff9800; }
-  .stb-meta {
-    font-size: 11px;
-    color: #888;
-  }
-  .stb-empty {
-    padding: 24px;
-    text-align: center;
-    color: #888;
-    font-style: italic;
-  }
-  .stb-error {
-    padding: 12px;
-    background: #fde7e7;
-    color: #b00020;
-    border-radius: 4px;
-    margin-bottom: 12px;
-    font-size: 13px;
-  }
-</style>
 <div class="stb-root">
   <h1>SuperTag Battery Monitor</h1>
   <div class="stb-controls">
@@ -144,6 +32,44 @@
 <script>
 geotab.addin.superTagBattery = function () {
   'use strict';
+
+  // MyGeotab strips <style> tags from injected addin HTML, so inject via JS.
+  var STYLE_ID = 'stb-styles';
+  var CSS = [
+    '.stb-root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:16px;color:#222;}',
+    '.stb-root h1{font-size:18px;margin:0 0 12px 0;font-weight:600;}',
+    '.stb-controls{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;}',
+    '.stb-search{flex:1;min-width:240px;padding:8px 12px;border:1px solid #c4cdd5;border-radius:4px;font-size:14px;box-sizing:border-box;}',
+    '.stb-search:focus{outline:none;border-color:#2a8cd6;box-shadow:0 0 0 2px rgba(42,140,214,0.2);}',
+    '.stb-refresh{padding:8px 16px;background:#2a8cd6;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;}',
+    '.stb-refresh:hover{background:#2378b8;}',
+    '.stb-refresh:disabled{background:#9bb8cc;cursor:not-allowed;}',
+    '.stb-status{font-size:13px;color:#666;margin-bottom:8px;min-height:18px;}',
+    '.stb-table{width:100%;border-collapse:collapse;font-size:13px;}',
+    '.stb-table th,.stb-table td{padding:8px 12px;text-align:left;border-bottom:1px solid #e6ebef;}',
+    '.stb-table th{background:#f4f6f8;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap;}',
+    '.stb-table th:hover{background:#e6ebef;}',
+    '.stb-table th.sorted-asc::after{content:" \\25B2";font-size:10px;}',
+    '.stb-table th.sorted-desc::after{content:" \\25BC";font-size:10px;}',
+    '.stb-table tr:hover td{background:#f9fafb;}',
+    '.stb-pct{font-weight:600;text-align:right;width:80px;}',
+    '.stb-pct-bar{display:inline-block;width:60px;height:8px;background:#e6ebef;border-radius:4px;overflow:hidden;margin-right:8px;vertical-align:middle;}',
+    '.stb-pct-bar-fill{height:100%;background:#4caf50;transition:width 0.2s;}',
+    '.stb-pct-low .stb-pct-bar-fill{background:#f44336;}',
+    '.stb-pct-mid .stb-pct-bar-fill{background:#ff9800;}',
+    '.stb-meta{font-size:11px;color:#888;}',
+    '.stb-empty{padding:24px;text-align:center;color:#888;font-style:italic;}',
+    '.stb-error{padding:12px;background:#fde7e7;color:#b00020;border-radius:4px;margin-bottom:12px;font-size:13px;}'
+  ].join('');
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    var el = document.createElement('style');
+    el.id = STYLE_ID;
+    el.type = 'text/css';
+    el.appendChild(document.createTextNode(CSS));
+    (document.head || document.body).appendChild(el);
+  }
 
   // Voltage -> percent table from RTK02 spec, banded by temperature.
   // thresholds sorted descending; first row whose voltage >= threshold wins.
@@ -430,6 +356,7 @@ geotab.addin.superTagBattery = function () {
 
   return {
     initialize: function (api, state, callback) {
+      injectStyles();
       rootEl = document.querySelector('.stb-root');
       tbodyEl = rootEl.querySelector('tbody');
       searchEl = rootEl.querySelector('.stb-search');
