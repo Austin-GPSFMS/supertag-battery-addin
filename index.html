@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SuperTag Battery Monitor</title>
+<style>
+  .stb-root {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 16px;
+    color: #222;
+  }
+  .stb-root h1 {
+    font-size: 18px;
+    margin: 0 0 12px 0;
+    font-weight: 600;
+  }
+  .stb-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .stb-search {
+    flex: 1;
+    min-width: 240px;
+    padding: 8px 12px;
+    border: 1px solid #c4cdd5;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+  }
+  .stb-search:focus {
+    outline: none;
+    border-color: #2a8cd6;
+    box-shadow: 0 0 0 2px rgba(42, 140, 214, 0.2);
+  }
+  .stb-refresh {
+    padding: 8px 16px;
+    background: #2a8cd6;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .stb-refresh:hover { background: #2378b8; }
+  .stb-refresh:disabled { background: #9bb8cc; cursor: not-allowed; }
+  .stb-status {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 8px;
+    min-height: 18px;
+  }
+  .stb-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .stb-table th,
+  .stb-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e6ebef;
+  }
+  .stb-table th {
+    background: #f4f6f8;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .stb-table th:hover { background: #e6ebef; }
+  .stb-table th.sorted-asc::after { content: " \25B2"; font-size: 10px; }
+  .stb-table th.sorted-desc::after { content: " \25BC"; font-size: 10px; }
+  .stb-table tr:hover td { background: #f9fafb; }
+  .stb-pct {
+    font-weight: 600;
+    text-align: right;
+    width: 80px;
+  }
+  .stb-pct-bar {
+    display: inline-block;
+    width: 60px;
+    height: 8px;
+    background: #e6ebef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .stb-pct-bar-fill {
+    height: 100%;
+    background: #4caf50;
+    transition: width 0.2s;
+  }
+  .stb-pct-low .stb-pct-bar-fill { background: #f44336; }
+  .stb-pct-mid .stb-pct-bar-fill { background: #ff9800; }
+  .stb-meta {
+    font-size: 11px;
+    color: #888;
+  }
+  .stb-empty {
+    padding: 24px;
+    text-align: center;
+    color: #888;
+    font-style: italic;
+  }
+  .stb-error {
+    padding: 12px;
+    background: #fde7e7;
+    color: #b00020;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="stb-root">
+  <h1>SuperTag Battery Monitor</h1>
+  <div class="stb-controls">
+    <input type="text" class="stb-search" placeholder="Search by serial or asset name..." />
+    <button class="stb-refresh" type="button">Refresh</button>
+  </div>
+  <div class="stb-status"></div>
+  <div class="stb-error" style="display:none;"></div>
+  <table class="stb-table">
+    <thead>
+      <tr>
+        <th data-sort="serialNumber">Serial</th>
+        <th data-sort="name">Asset Name</th>
+        <th data-sort="percent" class="sorted-asc">Battery %</th>
+        <th data-sort="voltage">Voltage</th>
+        <th data-sort="temperature">Temp (&deg;C)</th>
+        <th data-sort="lastReadingTs">Last Reading</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div class="stb-empty" style="display:none;">No devices to display.</div>
+</div>
+
+<script>
+geotab.addin.superTagBattery = function () {
+  'use strict';
+
+  // Voltage -> percent table from RTK02 spec, banded by temperature.
+  // thresholds sorted descending; first row whose voltage >= threshold wins.
+  // If voltage is below the lowest listed threshold, percent = 5.
+  var BATTERY_TABLE = [
+    { name: '10C+', match: function (t) { return t >= 10; },
+      thresholds: [[4.0, 100], [3.825, 75], [3.7, 50], [3.575, 25], [3.2, 15]] },
+    { name: '-5 to 9.9C', match: function (t) { return t >= -5 && t < 10; },
+      thresholds: [[3.9, 100], [3.725, 75], [3.6, 50], [3.5, 25], [3.2, 15]] },
+    { name: '-15 to -4.9C', match: function (t) { return t >= -15 && t < -5; },
+      thresholds: [[3.8, 100], [3.6, 75], [3.475, 50], [3.325, 25], [3.15, 15]] },
+    { name: '< -15.1C', match: function (t) { return t < -15; },
+      thresholds: [[3.8, 100], [3.6, 75], [3.425, 50], [3.25, 25], [3.15, 15]] }
+  ];
+
+  // No temp reading -> use 10C+ row (most conservative; lower percent for same voltage).
+  function computePercent(voltage, tempC) {
+    if (voltage == null || isNaN(voltage)) return null;
+    var row;
+    if (tempC == null || isNaN(tempC)) {
+      row = BATTERY_TABLE[0];
+    } else {
+      for (var i = 0; i < BATTERY_TABLE.length; i++) {
+        if (BATTERY_TABLE[i].match(tempC)) { row = BATTERY_TABLE[i]; break; }
+      }
+      if (!row) row = BATTERY_TABLE[0];
+    }
+    for (var j = 0; j < row.thresholds.length; j++) {
+      if (voltage >= row.thresholds[j][0]) return row.thresholds[j][1];
+    }
+    return 5;
+  }
+
+  function fmtTimestamp(ts) {
+    if (!ts) return '-';
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleString();
+  }
+
+  function fmtNumber(n, digits) {
+    if (n == null || isNaN(n)) return '-';
+    return Number(n).toFixed(digits == null ? 2 : digits);
+  }
+
+  function pctClass(p) {
+    if (p == null) return '';
+    if (p <= 25) return 'stb-pct-low';
+    if (p <= 50) return 'stb-pct-mid';
+    return '';
+  }
+
+  // State
+  var rootEl, tbodyEl, searchEl, refreshBtn, statusEl, errorEl, emptyEl;
+  var rows = [];
+  var sortKey = 'percent';
+  var sortDir = 'asc';
+  var loading = false;
+
+  function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ''; }
+  function setError(msg) {
+    if (!errorEl) return;
+    if (msg) { errorEl.textContent = msg; errorEl.style.display = ''; }
+    else { errorEl.textContent = ''; errorEl.style.display = 'none'; }
+  }
+
+  function compareRows(a, b) {
+    var av = a[sortKey], bv = b[sortKey];
+    var aNull = av == null || (typeof av === 'number' && isNaN(av));
+    var bNull = bv == null || (typeof bv === 'number' && isNaN(bv));
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;   // nulls always last
+    if (bNull) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') {
+      return sortDir === 'asc' ? av - bv : bv - av;
+    }
+    av = String(av).toLowerCase();
+    bv = String(bv).toLowerCase();
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  }
+
+  function render() {
+    if (!tbodyEl) return;
+    var q = (searchEl.value || '').trim().toLowerCase();
+    var filtered = !q ? rows.slice() : rows.filter(function (r) {
+      return (r.serialNumber && r.serialNumber.toLowerCase().indexOf(q) !== -1) ||
+             (r.name && r.name.toLowerCase().indexOf(q) !== -1);
+    });
+    filtered.sort(compareRows);
+
+    // Update sort indicators
+    var ths = rootEl.querySelectorAll('th[data-sort]');
+    for (var i = 0; i < ths.length; i++) {
+      ths[i].classList.remove('sorted-asc', 'sorted-desc');
+      if (ths[i].getAttribute('data-sort') === sortKey) {
+        ths[i].classList.add(sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+      }
+    }
+
+    tbodyEl.innerHTML = '';
+    if (filtered.length === 0) {
+      emptyEl.style.display = '';
+      emptyEl.textContent = rows.length === 0 ? 'No devices to display.' : 'No matches.';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    var frag = document.createDocumentFragment();
+    for (var k = 0; k < filtered.length; k++) {
+      var r = filtered[k];
+      var tr = document.createElement('tr');
+      var pctText = r.percent == null ? '-' : (r.percent + '%');
+      var barWidth = r.percent == null ? 0 : r.percent;
+      tr.innerHTML =
+        '<td>' + escapeHtml(r.serialNumber || '-') + '</td>' +
+        '<td>' + escapeHtml(r.name || '-') + '</td>' +
+        '<td class="stb-pct ' + pctClass(r.percent) + '">' +
+          '<span class="stb-pct-bar"><span class="stb-pct-bar-fill" style="width:' + barWidth + '%"></span></span>' +
+          escapeHtml(pctText) +
+        '</td>' +
+        '<td>' + escapeHtml(fmtNumber(r.voltage, 3)) + ' V</td>' +
+        '<td>' + escapeHtml(fmtNumber(r.temperature, 1)) + '</td>' +
+        '<td class="stb-meta">' + escapeHtml(fmtTimestamp(r.lastReadingTs)) + '</td>';
+      frag.appendChild(tr);
+    }
+    tbodyEl.appendChild(frag);
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // Pull most-recent StatusData record for a (device, diagnostic) within a window.
+  // Window: 30 days. Returns {data, dateTime} or null.
+  function buildStatusCall(deviceId, diagnosticId, fromDate, toDate) {
+    return ['Get', {
+      typeName: 'StatusData',
+      search: {
+        deviceSearch: { id: deviceId },
+        diagnosticSearch: { id: diagnosticId },
+        fromDate: fromDate,
+        toDate: toDate
+      }
+    }];
+  }
+
+  function pickLatest(records) {
+    if (!records || records.length === 0) return null;
+    var latest = records[0];
+    for (var i = 1; i < records.length; i++) {
+      if (new Date(records[i].dateTime) > new Date(latest.dateTime)) latest = records[i];
+    }
+    return latest;
+  }
+
+  function chunk(arr, size) {
+    var out = [];
+    for (var i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  function load(api) {
+    if (loading) return;
+    loading = true;
+    refreshBtn.disabled = true;
+    setError('');
+    setStatus('Loading devices...');
+    rows = [];
+    render();
+
+    var nowIso = new Date().toISOString();
+    var fromIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    api.call('Get', {
+      typeName: 'Device',
+      search: { fromDate: nowIso }
+    }, function (devices) {
+      if (!devices || devices.length === 0) {
+        setStatus('No active devices found.');
+        loading = false;
+        refreshBtn.disabled = false;
+        render();
+        return;
+      }
+      // Filter out the special NoDevice / synthetic entries
+      devices = devices.filter(function (d) {
+        return d.id && d.id !== 'NoDeviceId' && d.serialNumber && d.serialNumber !== '000-000-0000';
+      });
+      setStatus('Fetching battery readings for ' + devices.length + ' device(s)...');
+
+      // Build calls: 2 per device (voltage + temperature)
+      var calls = [];
+      var indexMap = []; // parallel: { deviceId, kind }
+      for (var i = 0; i < devices.length; i++) {
+        var d = devices[i];
+        calls.push(buildStatusCall(d.id, 'DiagnosticDeviceBatteryVoltageId', fromIso, nowIso));
+        indexMap.push({ deviceId: d.id, kind: 'voltage' });
+        calls.push(buildStatusCall(d.id, 'DiagnosticOutsideTemperatureId', fromIso, nowIso));
+        indexMap.push({ deviceId: d.id, kind: 'temperature' });
+      }
+
+      // Chunk multiCalls to avoid oversized payloads.
+      var CHUNK_SIZE = 200;
+      var callChunks = chunk(calls, CHUNK_SIZE);
+      var mapChunks = chunk(indexMap, CHUNK_SIZE);
+
+      var byDevice = {};
+      for (var k = 0; k < devices.length; k++) {
+        byDevice[devices[k].id] = {
+          serialNumber: devices[k].serialNumber,
+          name: devices[k].name,
+          voltage: null,
+          temperature: null,
+          lastReadingTs: null
+        };
+      }
+
+      var pending = callChunks.length;
+      if (pending === 0) {
+        finalizeRows(byDevice);
+        loading = false;
+        refreshBtn.disabled = false;
+        return;
+      }
+
+      var hadError = false;
+      for (var c = 0; c < callChunks.length; c++) {
+        (function (chunkIdx) {
+          api.multiCall(callChunks[chunkIdx], function (results) {
+            var mapping = mapChunks[chunkIdx];
+            for (var r = 0; r < results.length; r++) {
+              var info = mapping[r];
+              var latest = pickLatest(results[r]);
+              if (!latest) continue;
+              var rec = byDevice[info.deviceId];
+              if (!rec) continue;
+              rec[info.kind] = latest.data;
+              if (!rec.lastReadingTs || new Date(latest.dateTime) > new Date(rec.lastReadingTs)) {
+                rec.lastReadingTs = latest.dateTime;
+              }
+            }
+            pending--;
+            if (pending === 0 && !hadError) {
+              finalizeRows(byDevice);
+              loading = false;
+              refreshBtn.disabled = false;
+            }
+          }, function (err) {
+            if (hadError) return;
+            hadError = true;
+            setError('Failed to load battery data: ' + (err && err.message ? err.message : err));
+            setStatus('');
+            loading = false;
+            refreshBtn.disabled = false;
+          });
+        })(c);
+      }
+    }, function (err) {
+      setError('Failed to load devices: ' + (err && err.message ? err.message : err));
+      setStatus('');
+      loading = false;
+      refreshBtn.disabled = false;
+    });
+  }
+
+  function finalizeRows(byDevice) {
+    rows = [];
+    var ids = Object.keys(byDevice);
+    for (var i = 0; i < ids.length; i++) {
+      var rec = byDevice[ids[i]];
+      rec.percent = computePercent(rec.voltage, rec.temperature);
+      rows.push(rec);
+    }
+    setStatus('Loaded ' + rows.length + ' device(s) at ' + new Date().toLocaleTimeString() + '.');
+    render();
+  }
+
+  return {
+    initialize: function (api, state, callback) {
+      rootEl = document.querySelector('.stb-root');
+      tbodyEl = rootEl.querySelector('tbody');
+      searchEl = rootEl.querySelector('.stb-search');
+      refreshBtn = rootEl.querySelector('.stb-refresh');
+      statusEl = rootEl.querySelector('.stb-status');
+      errorEl = rootEl.querySelector('.stb-error');
+      emptyEl = rootEl.querySelector('.stb-empty');
+
+      searchEl.addEventListener('input', render);
+      refreshBtn.addEventListener('click', function () { load(api); });
+
+      var ths = rootEl.querySelectorAll('th[data-sort]');
+      for (var i = 0; i < ths.length; i++) {
+        ths[i].addEventListener('click', function (ev) {
+          var key = ev.currentTarget.getAttribute('data-sort');
+          if (sortKey === key) {
+            sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            sortKey = key;
+            sortDir = (key === 'percent') ? 'asc' : 'asc';
+          }
+          render();
+        });
+      }
+
+      callback();
+    },
+    focus: function (api, state) {
+      load(api);
+    },
+    blur: function () {
+      // nothing to clean up
+    }
+  };
+};
+</script>
+</body>
+</html>
