@@ -5,12 +5,12 @@
   "items": [
     {
       "version": "1.0",
-      "url": "index.html",
+      "url": "https://austin-gpsfms.github.io/supertag-battery-addin/index.html",
       "path": "ActivityLink/",
       "menuName": {
         "en": "SuperTag Batteries"
       },
-      "icon": "icon.svg"
+      "icon": "https://austin-gpsfms.github.io/supertag-battery-addin/icon.svg"
     }
   ],
   "isSigned": false
